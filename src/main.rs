@@ -56,8 +56,9 @@ struct RateLimitCore {
 #[tokio::main]
 async fn main() -> Result<(), Error> {
     let args = Opts::parse();
-
+    let client = reqwest::Client::new();
     let mut entries: HashMap<String, Data> = HashMap::new();
+
     if args.links.is_empty() {
         // fetch().await?;
     } else {
@@ -102,7 +103,7 @@ async fn main() -> Result<(), Error> {
             entries.insert(url, data);
         }
 
-        fetch(&mut entries).await?;
+        fetch(&client, &mut entries).await?;
     }
 
     if let Some(output) = args.output {
@@ -117,8 +118,7 @@ async fn main() -> Result<(), Error> {
         }
     }
 
-    let client = reqwest::Client::new();
-    let response = print_rate_limit(&client).await;
+    let response = fetch_rate_limit(&client).await;
     match response {
         Ok(rate_limit) => {
             println!("{:#?}", rate_limit);
@@ -131,7 +131,7 @@ async fn main() -> Result<(), Error> {
     Ok(())
 }
 
-async fn print_rate_limit(client: &Client) -> Result<RateLimit, Error> {
+async fn fetch_rate_limit(client: &Client) -> Result<RateLimit, Error> {
     let request_url = "https://api.github.com/rate_limit";
     let response = client
         .get(request_url)
@@ -144,7 +144,31 @@ async fn print_rate_limit(client: &Client) -> Result<RateLimit, Error> {
     Ok(response)
 }
 
-async fn fetch(m: &HashMap<String, Data>) -> Result<(), Error> {
+async fn fetch(
+    client: &Client,
+    entries: &HashMap<String, Data>,
+) -> Result<HashMap<String, Data>, Error> {
+    let mut updated_entries = HashMap::new();
+
+    for (key, data) in &*entries {
+        let request_url = data.api_url.take().unwrap();
+
+        println!("{}", request_url);
+        let response = client
+            .get(request_url)
+            .header(USER_AGENT, "reqwest")
+            .send()
+            .await?;
+
+        let users: Vec<Entry> = response.json().await?;
+
+        if users.len() > 0 {
+            data.first_review_date = Some(users.get(0).unwrap().submitted_at.clone());
+        }
+
+        updated_entries.insert(*key, *data);
+    }
+
     // let request_url = format!(
     //     "https://api.github.com/repos/{owner}/{repo}/pulls/{pull_number}/reviews",
     //     owner = "toptal",
@@ -153,7 +177,7 @@ async fn fetch(m: &HashMap<String, Data>) -> Result<(), Error> {
     // );
 
     // println!("{}", request_url);
-    // let response = clientto_string
+    // let response = client
     //     .get(&request_url)
     //     .header(USER_AGENT, "reqwest")
     //     .send()
@@ -164,7 +188,7 @@ async fn fetch(m: &HashMap<String, Data>) -> Result<(), Error> {
     // let users: Vec<Entry> = response.json().await?;
     // println!("{:#?}", users);
 
-    Ok(())
+    Ok(updated_entries)
 }
 
 impl fmt::Display for Data {
